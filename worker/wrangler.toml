@@ -1,0 +1,20 @@
+name = "nikke-synchro-refresh"
+main = "index.mjs"
+compatibility_date = "2026-02-01"
+
+[vars]
+REPOSITORY = "qwcol032/SynchroCalculator"
+BRANCH = "main"
+WORKFLOW = "update-data.yml"
+ALLOWED_ORIGIN = "https://qwcol032.github.io"
+PAGES_DATA_URL = "https://qwcol032.github.io/SynchroCalculator/data/data.json"
+COOLDOWN_SECONDS = "1800"
+TIMEOUT_SECONDS = "1200"
+
+[[durable_objects.bindings]]
+name = "REFRESH_COORDINATOR"
+class_name = "RefreshCoordinator"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RefreshCoordinator"]

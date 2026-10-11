@@ -1,0 +1,57 @@
+name: Update source data
+run-name: data-update ${{ inputs.job_id || github.run_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: 'Worker correlation id (manual execution may leave this blank)'
+        required: false
+        type: string
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: source-data-update
+  cancel-in-progress: false
+jobs:
+  collect:
+    name: Collect source data
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.collect.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Collect and validate
+        id: collect
+        run: npm run collect
+      - name: Commit verified data (including unchanged confirmation timestamp)
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/data/data.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'data: verify latest source data'
+            # A concurrent main update must never be overwritten. Rebase only the
+            # generated data commit; conflicts stop this run and preserve remote.
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main
+          fi
+  deploy:
+    name: Deploy updated Pages
+    needs: collect
+    uses: ./.github/workflows/pages.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
