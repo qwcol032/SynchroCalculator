@@ -38,6 +38,7 @@ form.addEventListener('input', updateGrowValue);
 function planView(plan, title) {
   const card = node('section', undefined, 'card'); card.append(node('h2', title, 'result-title'));
   card.append(node('p', `총 소모 시간 가치 ${fmt(plan.timeValue)}시간 (재화별 환산 시간의 합계이며, 실제 대기시간이 아닙니다.)`));
+  card.append(node('p', `시간 가치의 최적값 대비 허용 차이: 계획 전체 최대 ${plan.timeToleranceSeconds}초. 재화 충족과 아이템 재고는 정확히 검증합니다.`));
   card.append(node('h3', '재화 사용 후 잔여량'), table(['재화', '필요량', '잔여량'], RESOURCES.map(r => [labels[r], fmt(plan.costs[r]), fmt(plan.remaining[r])])));
   card.append(node('h3', '기존 케이스 사용 개수'), table(['재화', ...HOURS.map(h => `${h}h`)], RESOURCES.map(r => [labels[r], ...HOURS.map(h => plan.used[r][h])])));
   card.append(node('h3', '선택형 상자 개봉'), table(['재화 선택', '보급물자', '30DAY', '그로우 업'], RESOURCES.map(r => [labels[r], plan.opened.supply[r], plan.opened.day[r], plan.opened.grow[r] ?? '—'])));

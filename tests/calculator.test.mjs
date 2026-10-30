@@ -159,3 +159,20 @@ test('최대 레벨 탐색에 그로우가 반영되고 부족 배분 예시에 
   assert.equal(result.shortfallAllocation.grow.battle + result.shortfallAllocation.grow.core, 2);
   assert.ok(result.shortfall.core > 0n);
 });
+
+test('36초는 정규화 전 계획 전체 시간 예산, 후속 개수 최소화에는 누적하지 않음', () => {
+  const input = inventory({ day: 3, supply: 8, grow: 2 });
+  const calls = [];
+  const wrapper = { solve(lp, options) { const result = engine.solve(lp, options); calls.push({ options, result }); return result; } };
+  const result = plan(data, input, 201, wrapper);
+  const gcd = (a, b) => b ? gcd(b, a % b) : a;
+  const divisor = [BigInt(SCALE), growTimeValue(data, input, 'battle'), growTimeValue(data, input, 'core')].reduce(gcd);
+  assert.equal(calls[0].options.mip_abs_gap, Math.max(0.5, 10000 / Number(divisor)));
+  assert.equal(calls[0].options.mip_rel_gap, 0);
+  assert.ok(calls.slice(1).every(call => call.options.mip_abs_gap === 0.5));
+  assert.equal(result.timeValue, BigInt(Math.round(calls[0].result.ObjectiveValue)) * divisor);
+  assert.equal(result.timeToleranceSeconds, 36);
+});
+test('시간 초과 오류에 실패 레벨과 계산 단계 표시', () => {
+  assert.throws(() => plan(data, inventory(), 201, { solve() { return { Status: 'Time limit reached' }; } }), /201레벨 시간 가치.*Time limit reached/);
+});

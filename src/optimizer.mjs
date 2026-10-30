@@ -1,7 +1,8 @@
 import { RESOURCES, HOURS, RULES, SCALE, caseValue, hourlyIncome, fixed, totalCosts, supportedLevels } from './data.mjs';
 // Integer MILP: minimize time value (microhours), then opened boxes and used cases.
-// Every normalized objective is integer: an absolute MIP gap below one
-// proves the integer optimum. Never accept a time-limited incumbent.
+// The time objective may stop within 36 seconds of the optimum for the whole
+// plan. Integer box/case tie objectives remain exact. Reject timed-out incumbents.
+export const TIME_VALUE_TOLERANCE = 10_000; // microhours = 0.01 h = 36 s
 const max0 = n => n > 0n ? n : 0n;
 const gcd = (a, b) => b === 0n ? a : gcd(b, a % b);
 const ceilDiv = (a, b) => (a + b - 1n) / b;
@@ -18,7 +19,7 @@ export function plan(data, input, target, highs, { allCases = false, feasibility
   const costs = totalCosts(data, input.current, target);
   const vars = []; const constraints = []; const bounds = []; const limits = {};
   const add = (name, max) => { vars.push(name); limits[name] = max; bounds.push(`0 <= ${name} <= ${max}`); return name; };
-  const ds = [], ss = [], gs = [], cs = [], times = [], per = {};
+  const ds = [], ss = [], gs = [], cs = [], times = [], timeObjective = [], per = {};
   const growStock = input.grow ?? 0;
   for (const r of RESOURCES) {
     const payouts = HOURS.map(h => caseValue(data, input.outpost, input.academy, r, h));
@@ -32,7 +33,7 @@ export function plan(data, input, target, highs, { allCases = false, feasibility
     ds.push(d); ss.push(s);
     times.push([d, RULES.day[r] * SCALE], [s, RULES.supply[r] * SCALE]);
     const grow = r in RULES.grow ? add(`grow_${r}`, cap(growStock, fixed(RULES.grow[r]))) : null;
-    if (grow) { gs.push(grow); times.push([grow, Number(growTimeValue(data, input, r))]); }
+    if (grow) { gs.push(grow); times.push([grow, Number(growTimeValue(data, input, r))]); timeObjective.push([grow, Number(growTimeValue(data, input, r))]); }
     const generated = add(`g_${r}`, cap(input.day * RULES.day[r] + input.supply * RULES.supply[r], payouts[0])); cs.push(generated);
     constraints.push(`generated_${r}: ${generated} - ${RULES.day[r]} ${d} - ${RULES.supply[r]} ${s} <= 0`);
     const growPayout = grow ? fixed(RULES.grow[r]) : 0n;
@@ -46,7 +47,13 @@ export function plan(data, input, target, highs, { allCases = false, feasibility
       terms.push(`${caseValue(data, input.outpost, input.academy, r, h) / quantum} ${name}`);
       if (allCases) constraints.push(`all_${name}: ${name} = ${input.cases[r][h]}`);
     }
-    per[r] = { d, s, grow, generated, use };
+    // Expose the integer number of nominal hours to the solver. Without this
+    // redundant aggregate it branches on many equivalent case combinations.
+    const normalTerms = [[d, RULES.day[r]], [s, RULES.supply[r]], ...HOURS.map(h => [`c_${r}_${h}`, h])];
+    const hours = add(`hours_${r}`, normalTerms.reduce((sum, [v, h]) => sum + limits[v] * h, 0));
+    constraints.push(`hours_${r}: ${hours}${normalTerms.map(([v, h]) => ` - ${h} ${v}`).join('')} = 0`);
+    timeObjective.push([hours, SCALE]);
+    per[r] = { d, s, grow, generated, use, hours, normalTerms };
     constraints.push(`need_${r}: ${terms.join(' + ')} >= ${ceilDiv(max0(costs[r] - input.stock[r]), quantum)}`);
   }
   constraints.push(`day_stock: ${ds.join(' + ')} <= ${input.day}`, `supply_stock: ${ss.join(' + ')} <= ${input.supply}`, `grow_stock: ${gs.join(' + ')} <= ${growStock}`);
@@ -57,9 +64,15 @@ export function plan(data, input, target, highs, { allCases = false, feasibility
     const terms = weighted.map(([v, w]) => [v, Number(BigInt(w) / divisor)]);
     const objective = terms.map(([v, w]) => `${w} ${v}`).join(' + ') || `0 ${vars[0]}`;
     const lp = `Minimize\n obj: ${objective}\nSubject To\n ${constraints.join('\n ')}\nBounds\n ${bounds.join('\n ')}\nGenerals\n ${vars.join(' ')}\nEnd`;
-    const result = highs.solve(lp, { output_flag: false, mip_rel_gap: 0, mip_abs_gap: 0.5, mip_feasibility_tolerance: 1e-9, primal_feasibility_tolerance: 1e-9, time_limit: 20, random_seed: 0 });
+    // Objective coefficients were divided by gcd; convert the global budget
+    // to the same units. Below one integer unit, 0.5 still proves exactness.
+    const absoluteGap = label === 'time' ? Math.max(0.5, TIME_VALUE_TOLERANCE / Number(divisor)) : 0.5;
+    const result = highs.solve(lp, { output_flag: false, mip_rel_gap: 0, mip_abs_gap: absoluteGap, mip_feasibility_tolerance: 1e-9, primal_feasibility_tolerance: 1e-9, time_limit: 20, random_seed: 0 });
     if (result.Status === 'Infeasible') return false;
-    if (result.Status !== 'Optimal') throw new Error(`최적화를 완료하지 못했습니다 (${result.Status})`);
+    if (result.Status !== 'Optimal') {
+      const step = { time: '시간 가치', boxes: '상자 개봉 수', cases: '케이스 사용 수', feasible: '도달 가능 여부' }[label];
+      throw new Error(`${target}레벨 ${step} 최적화를 완료하지 못했습니다 (${result.Status})`);
+    }
     answer = Object.fromEntries(vars.map(v => {
       const n = result.Columns[v]?.Primal ?? 0; const rounded = Math.round(n);
       if (!Number.isSafeInteger(rounded) || Math.abs(n - rounded) > 1e-7 || rounded < 0 || rounded > limits[v]) throw new Error('정수 해 검증 실패');
@@ -75,10 +88,11 @@ export function plan(data, input, target, highs, { allCases = false, feasibility
     return true;
   };
   if (feasibilityOnly) { if (!solve([], 'feasible')) return null; }
-  else if (!solve(times, 'time') || !solve([...ds, ...ss, ...gs], 'boxes') || !solve(cs, 'cases')) return null;
+  else if (!solve(timeObjective, 'time') || !solve([...ds, ...ss, ...gs], 'boxes') || !solve(cs, 'cases')) return null;
   const opened = { day: {}, supply: {}, grow: { battle: 0, core: 0 } }; const used = {}, remainingCases = {}, remaining = {}, generatedCases = {};
   for (const r of RESOURCES) {
-    const { d, s, grow, generated } = per[r]; opened.day[r] = answer[d]; opened.supply[r] = answer[s];
+    const { d, s, grow, generated, hours, normalTerms } = per[r];
+    if (normalTerms.reduce((sum, [v, h]) => sum + answer[v] * h, 0) !== answer[hours]) throw new Error('시간 합계 검증 실패'); opened.day[r] = answer[d]; opened.supply[r] = answer[s];
     if (grow) opened.grow[r] = answer[grow];
     const made = answer[d] * RULES.day[r] + answer[s] * RULES.supply[r];
     generatedCases[r] = { received: made, used: answer[generated], remaining: made - answer[generated] };
@@ -98,7 +112,7 @@ export function plan(data, input, target, highs, { allCases = false, feasibility
   if (growUsed > growStock || dayUsed > input.day || supplyUsed > input.supply) throw new Error('상자 재고 제약 검증 실패');
   const timeValue = times.reduce((sum, [v, w]) => sum + BigInt(answer[v]) * BigInt(w), 0n);
   if (timeValue > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('시간 가치 합계가 안전한 최적화 범위를 넘었습니다. 아이템 개수를 줄여주세요.');
-  return { target, costs, deficits: Object.fromEntries(RESOURCES.map(r => [r, max0(costs[r] - input.stock[r])])), opened, used, generatedCases, remainingCases, remaining, remainingBoxes: { day: input.day - dayUsed, supply: input.supply - supplyUsed, grow: growStock - growUsed }, growGained: Object.fromEntries(Object.keys(RULES.grow).map(r => [r, BigInt(opened.grow[r]) * fixed(RULES.grow[r])])), timeValue, objective: [Number(timeValue), dayUsed + supplyUsed + growUsed, cs.reduce((a, v) => a + answer[v], 0)] };
+  return { target, costs, deficits: Object.fromEntries(RESOURCES.map(r => [r, max0(costs[r] - input.stock[r])])), opened, used, generatedCases, remainingCases, remaining, remainingBoxes: { day: input.day - dayUsed, supply: input.supply - supplyUsed, grow: growStock - growUsed }, growGained: Object.fromEntries(Object.keys(RULES.grow).map(r => [r, BigInt(opened.grow[r]) * fixed(RULES.grow[r])])), timeValue, timeToleranceSeconds: TIME_VALUE_TOLERANCE * 3600 / SCALE, objective: [Number(timeValue), dayUsed + supplyUsed + growUsed, cs.reduce((a, v) => a + answer[v], 0)] };
 }
 export function calculate(data, input, highs) {
   const targetPlan = plan(data, input, input.target, highs);

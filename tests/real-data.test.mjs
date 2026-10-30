@@ -47,3 +47,24 @@ test('Webpack 런타임과 OutpostCalculator 실제 참조로 청크 URL 탐색'
   const runtime = 'f.u=e=>"common/js/async/"+e+"."+{123:"latesthash"}[e]+".js";f.p="/wp-content/plugins/dotgg-game/";';
   assert.equal(webpackToolChunk(main, runtime, 'https://nikke.gg/runtime.js'), 'https://nikke.gg/wp-content/plugins/dotgg-game/common/js/async/123.latesthash.js');
 });
+
+test('회귀: 전초기지 747 · 싱크로 867→881 혼합 재고의 전체 계산', async () => {
+  const engine = await loadHighs();
+  const input = inventory({ current: 867, target: 881, outpost: 747, academy: true,
+    stock: { credit: fixed(21298000), battle: fixed(29938000), core: fixed(4683) },
+    cases: {
+      credit: { 1: 451, 2: 111, 8: 10, 12: 5, 24: 2 },
+      battle: { 1: 574, 2: 333, 8: 8, 12: 15, 24: 2 },
+      core: { 1: 618, 2: 60, 8: 1, 12: 3, 24: 2 }
+    }, supply: 398, day: 248, grow: 450 });
+  const result = calculate(data, input, engine);
+  assert.equal(result.possible, true); assert.equal(result.maximum.level, 883);
+  assert.equal(result.targetPlan.timeToleranceSeconds, 36);
+  for (const p of [result.targetPlan, result.maximum.plan]) {
+    for (const r of ['credit', 'battle', 'core']) {
+      assert.ok(p.remaining[r] >= 0n);
+      for (const h of [1, 2, 8, 12, 24]) assert.ok(p.used[r][h] >= 0 && p.used[r][h] <= input.cases[r][h]);
+    }
+    for (const box of ['day', 'supply', 'grow']) assert.ok(Object.values(p.opened[box]).reduce((sum, n) => sum + n, 0) <= input[box]);
+  }
+});

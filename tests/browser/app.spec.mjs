@@ -51,3 +51,24 @@ test('그로우 입력 유지·고정 지급·시간 가치 계획과 모바일 
   await page.reload(); await expect(page.locator('[name=grow]')).toHaveValue('2');
   await page.setViewportSize({ width: 390, height: 844 }); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test('회귀: 747 전초기지 867→881 전체 계산과 36초 기준 표시', async ({ page }) => {
+  test.setTimeout(90000);
+  const raw = { outpost: '747', current: '867', target: '881', academy: true,
+    stock_credit: '21298', unit_credit: 'K', stock_battle: '29938', unit_battle: 'K', stock_core: '4683', unit_core: 'base',
+    case_credit_1: '451', case_credit_2: '111', case_credit_8: '10', case_credit_12: '5', case_credit_24: '2',
+    case_battle_1: '574', case_battle_2: '333', case_battle_8: '8', case_battle_12: '15', case_battle_24: '2',
+    case_core_1: '618', case_core_2: '60', case_core_8: '1', case_core_12: '3', case_core_24: '2', supply: '398', day: '248', grow: '450' };
+  await page.goto('/SynchroCalculator/'); await expect(page.locator('#calculate')).toBeEnabled();
+  for (const [name, value] of Object.entries(raw)) {
+    const field = page.locator(`[name=${name}]`);
+    if (name === 'academy') await field.setChecked(value);
+    else if (name.startsWith('unit_')) await field.selectOption(value);
+    else await field.fill(value);
+  }
+  await page.locator('#calculate').click();
+  await expect(page.locator('#results')).toContainText('목표 레벨 달성 가능', { timeout: 60000 });
+  await expect(page.locator('#results .max-level')).toHaveText('883 LV');
+  await expect(page.locator('#results')).toContainText('계획 전체 최대 36초');
+  await expect(page.locator('#input-error')).toBeHidden();
+});
