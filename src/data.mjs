@@ -1,7 +1,7 @@
 export const RESOURCES = ['credit', 'battle', 'core'];
 export const HOURS = [1, 2, 8, 12, 24];
 export const SCALE = 1_000_000;
-export const RULES = Object.freeze({ rounding: 'floor-per-case', bonus: { credit: 160, battle: 145, core: 145 }, supply: { credit: 3, battle: 1, core: 1 }, day: { credit: 30, battle: 10, core: 10 } });
+export const RULES = Object.freeze({ rounding: 'floor-per-case', bonus: { credit: 160, battle: 145, core: 145 }, supply: { credit: 3, battle: 1, core: 1 }, day: { credit: 30, battle: 10, core: 10 }, grow: { battle: 88458, core: 16 } });
 export function fixed(value, name = '수치') {
   const text = String(value ?? '').trim();
   if (!/^(?:\d+)(?:\.\d{1,6})?$/.test(text)) throw new Error(`${name}: 0 이상의 숫자를 소수 6자리 이내로 입력하세요.`);
@@ -43,7 +43,7 @@ export function validateData(data) {
 export function supportedLevels(data) {
   return { min: Math.max(200, data.ranges.synchro.min - (data.costDirection === 'arrival' ? 1 : 0)), max: data.ranges.synchro.max + (data.costDirection === 'departure' ? 1 : 0) };
 }
-export function caseValue(data, level, academy, resource, hours) {
+export function hourlyIncome(data, level, academy, resource, hours = 1) {
   const row = data.outpost[level - data.ranges.outpost.min];
   if (!row || row.level !== level) throw new Error('전초기지 데이터가 없습니다. 최신 데이터 확인이 필요합니다.');
   let n = fixed(row[resource]) * BigInt(hours);
@@ -51,6 +51,10 @@ export function caseValue(data, level, academy, resource, hours) {
     // Published rows with the full academy bonus can also serve the unchecked setting.
     if (!academy) n = n * 100n / BigInt(RULES.bonus[resource]);
   } else if (academy) n = n * BigInt(RULES.bonus[resource]) / 100n;
+  return n;
+}
+export function caseValue(data, level, academy, resource, hours) {
+  let n = hourlyIncome(data, level, academy, resource, hours);
   if (data.rounding === 'floor-per-case') n = n / BigInt(SCALE) * BigInt(SCALE);
   return n;
 }
@@ -82,6 +86,6 @@ export function parseInput(raw, data) {
     // Exact amounts use BigInt; bound item variables for the numerical solver.
     for (const h of HOURS) if (BigInt(cases[r][h]) * caseValue(data, outpost, !!raw.academy, r, h) > 9_000_000_000_000_000n * BigInt(SCALE)) throw new Error('케이스 재고가 계산 가능 범위를 넘었습니다.');
   }
-  for (const [count, name] of [[raw.supply, '보급물자'], [raw.day, '30DAY 상자']]) if (integer(count, name, true) > 100000000) throw new Error('선택형 상자는 1억 개 이하로 입력하세요.');
-  return { current, target, outpost, academy: !!raw.academy, stock, cases, supply: integer(raw.supply, '보급물자', true), day: integer(raw.day, '30DAY 상자', true) };
+  for (const [count, name] of [[raw.supply, '보급물자'], [raw.day, '30DAY 상자'], [raw.grow, '챌린저 그로우 업 박스']]) if (integer(count, name, true) > 100000000) throw new Error('선택형 상자는 1억 개 이하로 입력하세요.');
+  return { current, target, outpost, academy: !!raw.academy, stock, cases, supply: integer(raw.supply, '보급물자', true), day: integer(raw.day, '30DAY 상자', true), grow: integer(raw.grow, '챌린저 그로우 업 박스', true) };
 }

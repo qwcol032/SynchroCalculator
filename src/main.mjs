@@ -1,5 +1,5 @@
 import './style.css';
-import { RESOURCES, HOURS, SCALE, parseInput, supportedLevels, validateData } from './data.mjs';
+import { RESOURCES, HOURS, SCALE, RULES, hourlyIncome, parseInput, supportedLevels, validateData } from './data.mjs';
 const $ = id => document.getElementById(id);
 const labels = { credit: '크레딧', battle: '배틀 데이터', core: '코어 더스트' };
 const base = import.meta.env.BASE_URL;
@@ -26,23 +26,34 @@ form.addEventListener('input', () => { try { const saved = Object.fromEntries(ne
 function error(id, text) { $(id).textContent = text ?? ''; $(id).hidden = !text; }
 const fmt = value => { const n = BigInt(value); const fraction = String(n % BigInt(SCALE)).padStart(6, '0').replace(/0+$/, ''); return (n / BigInt(SCALE)).toLocaleString('ko-KR') + (fraction ? `.${fraction}` : ''); };
 function table(headers, rows) { const t = node('table'); const head = node('thead'), tr = node('tr'); for (const h of headers) tr.append(node('th', h)); head.append(tr); t.append(head); const body = node('tbody'); for (const row of rows) { const tr = node('tr'); for (const value of row) tr.append(node('td', value)); body.append(tr); } t.append(body); return t; }
+function updateGrowValue() {
+  if (!data) return;
+  try {
+    const outpost = Number(form.elements.outpost.value);
+    const values = ['battle', 'core'].map(r => RULES.grow[r] * SCALE / Number(hourlyIncome(data, outpost, form.elements.academy.checked, r)));
+    $('grow-value').textContent = `그로우 업 박스 1개 시간 가치: 배틀 데이터 ${values[0].toFixed(6)}시간 / 코어 더스트 ${values[1].toFixed(6)}시간. 목표 부족량과 다른 아이템을 함께 고려해 배분합니다.`;
+  } catch { $('grow-value').textContent = '지원하는 전초기지 레벨을 입력하면 선택별 시간 가치를 표시합니다.'; }
+}
+form.addEventListener('input', updateGrowValue);
 function planView(plan, title) {
   const card = node('section', undefined, 'card'); card.append(node('h2', title, 'result-title'));
+  card.append(node('p', `총 소모 시간 가치 ${fmt(plan.timeValue)}시간 (재화별 환산 시간의 합계이며, 실제 대기시간이 아닙니다.)`));
   card.append(node('h3', '재화 사용 후 잔여량'), table(['재화', '필요량', '잔여량'], RESOURCES.map(r => [labels[r], fmt(plan.costs[r]), fmt(plan.remaining[r])])));
   card.append(node('h3', '기존 케이스 사용 개수'), table(['재화', ...HOURS.map(h => `${h}h`)], RESOURCES.map(r => [labels[r], ...HOURS.map(h => plan.used[r][h])])));
-  card.append(node('h3', '선택형 상자 개봉'), table(['재화 선택', '보급물자', '30DAY'], RESOURCES.map(r => [labels[r], plan.opened.supply[r], plan.opened.day[r]])));
+  card.append(node('h3', '선택형 상자 개봉'), table(['재화 선택', '보급물자', '30DAY', '그로우 업'], RESOURCES.map(r => [labels[r], plan.opened.supply[r], plan.opened.day[r], plan.opened.grow[r] ?? '—'])));
+  card.append(node('h3', '그로우 업 박스 고정 획득량'), table(['재화', '획득량'], ['battle', 'core'].map(r => [labels[r], fmt(plan.growGained[r])])));
   card.append(node('h3', '상자에서 받은 1시간 케이스'), table(['재화', '획득', '사용', '남음'], RESOURCES.map(r => [labels[r], plan.generatedCases[r].received, plan.generatedCases[r].used, plan.generatedCases[r].remaining])));
   card.append(node('h3', '잔여 케이스 (상자에서 받은 케이스 포함)'), table(['재화', ...HOURS.map(h => `${h}h`)], RESOURCES.map(r => [labels[r], ...HOURS.map(h => plan.remainingCases[r][h])])));
-  card.append(node('p', `남은 보급물자 ${plan.remainingBoxes.supply}개 · 30DAY ${plan.remainingBoxes.day}개`));
+  card.append(node('p', `남은 보급물자 ${plan.remainingBoxes.supply}개 · 30DAY ${plan.remainingBoxes.day}개 · 그로우 업 ${plan.remainingBoxes.grow}개`));
   return card;
 }
 function render(result) {
   $('result-placeholder').hidden = true; $('results').replaceChildren();
   const overview = node('section', undefined, 'card'); overview.append(node('h2', result.possible ? '목표 레벨 달성 가능' : '현재 재고로 목표 달성 불가', `result-title ${result.possible ? '' : 'fail'}`));
   overview.append(table(['재화', '총 필요량', '보유 차감 후 부족'], RESOURCES.map(r => [labels[r], fmt(result.costs[r]), fmt(result.deficits[r])]))); $('results').append(overview);
-  if (result.targetPlan) $('results').append(planView(result.targetPlan, '목표 달성 · 최소 사용 계획'));
+  if (result.targetPlan) $('results').append(planView(result.targetPlan, '목표 달성 · 최소 시간 가치 계획'));
   else {
-    const section = node('section', undefined, 'card'); section.append(node('h3', '전체 아이템 활용 시 부족량 (배분 예시)'), table(['재화', '부족량'], RESOURCES.map(r => [labels[r], fmt(result.shortfall[r])])), table(['재화 선택', '보급물자', '30DAY'], RESOURCES.map(r => [labels[r], result.shortfallAllocation.supply[r], result.shortfallAllocation.day[r]])), node('p', '선택형 상자 배분에 따라 부족 재화가 달라집니다. 최대 레벨 계획을 기준으로 남은 상자를 크레딧 → 배틀 → 코어에 배분한 예시입니다.')); $('results').append(section);
+    const section = node('section', undefined, 'card'); section.append(node('h3', '전체 아이템 활용 시 부족량 (배분 예시)'), table(['재화', '부족량'], RESOURCES.map(r => [labels[r], fmt(result.shortfall[r])])), table(['재화 선택', '보급물자', '30DAY', '그로우 업'], RESOURCES.map(r => [labels[r], result.shortfallAllocation.supply[r], result.shortfallAllocation.day[r], result.shortfallAllocation.grow[r] ?? '—'])), node('p', '선택형 상자 배분에 따라 부족 재화가 달라집니다. 최대 레벨 계획에서 남은 시간 상자를 크레딧 → 배틀 → 코어, 그로우 업 박스를 배틀 → 코어에 배분한 예시입니다. 시간 가치 최적 배분이 아닙니다.')); $('results').append(section);
   }
   const max = node('section', undefined, 'card'); max.append(node('h3', '모든 재고를 활용한 최대 도달'), node('div', `${result.maximum.level} LV`, 'max-level'), node('p', result.maximum.atDataCap ? `최소 ${result.maximum.level}레벨 도달 가능, 이후 데이터 필요` : '세 재화의 누적 비용을 모두 충족하는 최대 레벨입니다. 자연 획득은 제외합니다.')); $('results').append(max);
   const details = node('details'); details.append(node('summary', '최대 레벨용 별도 배분 계획 보기'), planView(result.maximum.plan, '최대 레벨 · 전체 기존 케이스 활용')); $('results').append(details);
@@ -67,7 +78,7 @@ async function loadData(expected) {
   if (!response.ok || !response.headers.get('Content-Type')?.includes('json')) throw new Error('검증된 실제 데이터가 아직 없습니다. 운영자가 원본 수집과 검증을 완료해야 합니다.');
   const candidate = validateData(await response.json());
   if (expected && (candidate.contentVersion !== expected.contentVersion || candidate.checkedAt !== expected.checkedAt)) throw new Error('Pages에 새 확인 버전이 아직 반영되지 않았습니다. 기존 데이터를 유지합니다.');
-  data = candidate; $('calculate').disabled = false; error('data-error');
+  data = candidate; updateGrowValue(); $('calculate').disabled = false; error('data-error');
   const range = supportedLevels(data);
   $('data-info').textContent = `싱크로 ${range.min}~${range.max} · 전초기지 ${data.ranges.outpost.min}~${data.ranges.outpost.max} | 마지막 확인 ${new Date(data.checkedAt).toLocaleString('ko-KR')} | 실제 변경 ${new Date(data.changedAt).toLocaleString('ko-KR')}`;
   $('assumptions').replaceChildren(...data.assumptions.map(a => node('li', a)));

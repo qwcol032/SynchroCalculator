@@ -37,3 +37,17 @@ test('저장된 실제 JSON과 브라우저 WASM으로 200→201 계산', async 
   await page.locator('[name=stock_credit]').fill(String(row.credit / 1000)); await page.locator('[name=stock_battle]').fill(String(row.battle / 1000)); await page.locator('[name=stock_core]').fill(String(row.core));
   await page.locator('#calculate').click(); await expect(page.locator('#results')).toContainText('목표 레벨 달성 가능', { timeout: 30000 }); await expect(page.locator('#results')).toContainText(row.battle.toLocaleString('ko-KR'));
 });
+
+test('그로우 입력 유지·고정 지급·시간 가치 계획과 모바일 표시', async ({ page }) => {
+  await page.route('**/data/data.json?*', route => route.fulfill({ json: fixture() }));
+  await page.goto('/SynchroCalculator/'); await expect(page.locator('#calculate')).toBeEnabled();
+  await page.locator('[name=academy]').uncheck();
+  await page.locator('[name=outpost]').fill('1'); await page.locator('[name=current]').fill('200'); await page.locator('[name=target]').fill('201');
+  await page.locator('[name=stock_credit]').fill('0.01'); await page.locator('[name=grow]').fill('2');
+  await expect(page.locator('#grow-value')).toContainText('11794.400000시간');
+  await page.locator('#calculate').click();
+  await expect(page.locator('#results')).toContainText('목표 달성 · 최소 시간 가치 계획', { timeout: 30000 });
+  await expect(page.locator('#results')).toContainText('88,458'); await expect(page.locator('#results')).toContainText('그로우 업 0개');
+  await page.reload(); await expect(page.locator('[name=grow]')).toHaveValue('2');
+  await page.setViewportSize({ width: 390, height: 844 }); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
